@@ -1,9 +1,9 @@
-export DATA_PATH=./share_data/base65cate_6k_think
-export CKPT_PATH=./share_models/Qwen2-VL-2B-Instruct
-export SAVE_PATH=./share_models/Qwen2-VL-2B-Instruct_GRPO_coco_base65cate_6k
+export DATA_PATH=/home/data/wyy/projects/Visual-RFT/dataset/relation_dataset_10k
+export CKPT_PATH=/home/data/wyy/checkpoints/Qwen2-VL-2B-Instruct
+export SAVE_PATH=/home/data/wyy/projects/Visual-RFT/checkpoints/Qwen2-VL-2B-relation_10k_epoch_1
 
 export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model during RL
-export LOG_PATH="./debug_log_2b_GRPO_coco_base65cate_6k.txt"
+export LOG_PATH="/home/data/wyy/projects/Visual-RFT/debug_log_2b_GRPO_relation_10k_epoch_1.txt"
 
 torchrun --nproc_per_node="8" \
     --nnodes="1" \
@@ -24,8 +24,8 @@ torchrun --nproc_per_node="8" \
     --gradient_checkpointing false \
     --attn_implementation flash_attention_2 \
     --max_pixels 401408 \
-    --num_train_epochs 2 \
-    --run_name Qwen2-VL-2B_GRPO_coco_base65cate_6k \
+    --num_train_epochs 1 \
+    --run_name Qwen2-VL-2B_GRPO_relation_10k_epoch_1 \
     --save_steps 100 \
     --save_only_model true \
-    --num_generations 8 '
+    --num_generations 8

@@ -54,6 +54,7 @@ if is_peft_available():
 
 if is_wandb_available():
     import wandb
+    wandb.login(key='455bbae8d6b8e3fa45fb7b0ebcc8a2f50c9a028d')
 
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
@@ -376,7 +377,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             raise ValueError("The GRPOTrainer does not support returning outputs")
     
         
-
+        tasks = [x['task'] for x in inputs]
         prompts = [x["prompt"] for x in inputs]
         prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
         images = [x["image"] for x in inputs]
@@ -401,7 +402,7 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
-            prompt_inputs['pixel_values'] = prompt_inputs['pixel_values'][None]
+            # prompt_inputs['pixel_values'] = prompt_inputs['pixel_values'][None]
             prompt_completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config)
 
             prompt_length = prompt_ids.size(1)
@@ -419,7 +420,8 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B*G, P+C)
-        pixel_values = prompt_inputs["pixel_values"].repeat_interleave(self.num_generations, dim=0).view(-1, pixel_values.shape[-1])
+        # pixel_values = prompt_inputs["pixel_values"].repeat_interleave(self.num_generations, dim=0).view(-1, pixel_values.shape[-1])
+        pixel_values = prompt_inputs["pixel_values"].repeat(self.num_generations, 1)
         image_grid_thw = prompt_inputs["image_grid_thw"].repeat_interleave(self.num_generations, dim=0)
 
         per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, attention_mask, pixel_values, image_grid_thw)
@@ -445,6 +447,9 @@ class Qwen2VLGRPOTrainer(Trainer):
         # Compute the rewards
         prompts = [prompt for prompt in prompts for _ in range(self.num_generations)]
 
+        task_rewards = torch.zeros(len(prompts), 4, device=device)      # 每一列对应一个子任务
+        task_nums = torch.zeros(1, 4, dtype=torch.int64, device=device)        # 计数分布式训练中所有节点上每个任务出现的总次数
+        task_idx = {'ground':0, 'general_reasoning':1, 'relation':2, 'count':3}
         rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
@@ -468,7 +473,12 @@ class Qwen2VLGRPOTrainer(Trainer):
                     for example in inputs:
                         # Repeat each value in the column for `num_generations` times
                         reward_kwargs[key].extend([example[key]] * self.num_generations)
-                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+
+                output_reward_func = reward_func(prompts=prompts, completions=completions, tasks=tasks, **reward_kwargs)
+                reward_func_name = reward_func.__name__
+                if reward_func_name == 'accuracy_reward_iou':
+                    task_rewards[:, task_idx[tasks[0]]] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
+                    task_nums[:, task_idx[tasks[0]]] += 1
                 rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
 
         # Sum the rewards from all reward functions
@@ -493,12 +503,23 @@ class Qwen2VLGRPOTrainer(Trainer):
         self._metrics["completion_length"].append(completion_length)
 
         reward_per_func = self.accelerator.gather_for_metrics(rewards_per_func).mean(0)
+        reward_per_task = self.accelerator.gather_for_metrics(task_rewards).sum(dim=0)
+        task_nums_total = self.accelerator.gather_for_metrics(task_nums).sum(dim=0)
+        # print('reward_per_task: ',reward_per_task, '\n')
+        # print('task_nums_total', task_nums_total, '\n')
+        avg_reward_per_task = reward_per_task / (task_nums_total + 1e-10) / 8
+        # print('avg_reward_per_task', avg_reward_per_task, '\n')
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):
                 reward_func_name = reward_func.config._name_or_path.split("/")[-1]
             else:
                 reward_func_name = reward_func.__name__
             self._metrics[f"rewards/{reward_func_name}"].append(reward_per_func[i].item())
+            
+        tasks_note = ['ground', 'general_reasoning', 'relation', 'count']
+        for i, reward in enumerate(avg_reward_per_task):
+            if reward > 0:
+                self._metrics[f"rewards/accuracy/{tasks_note[i]}"].append(reward.item())                
 
         self._metrics["reward"].append(self.accelerator.gather_for_metrics(rewards).mean().item())
 

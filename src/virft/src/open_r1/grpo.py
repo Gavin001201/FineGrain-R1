@@ -72,6 +72,9 @@ def extract_bbox(response):
             # If the string is truncated, remove the incomplete part
             content_str = content_str.rsplit("},", 1)[0] + "}]"
     
+        # if not content_str.startswith("["):
+        #     content_str = "[" + content_str
+             
         # Replace single quotes with double quotes for valid JSON
         content_str_corrected = content_str.replace("'", '"')
     
@@ -211,73 +214,256 @@ def compute_reward_confidence(iou_results):
     confidence_reward = confidence_reward/len(iou_results)
     return confidence_reward
 
-def accuracy_reward_iou(completions, solution, **kwargs):
-    """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
-    contents = [completion[0]["content"] for completion in completions]
-    rewards = []
-    current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
-    for content, sol in zip(contents, solution):
-        reward = 0.0
-        # Try symbolic verification first
-        try:
-            answer = parse(content)
-            if float(verify(answer, parse(sol))) > 0:
-                reward = 1.0
-        except Exception:
-            pass  # Continue to next verification method if this fails
-
-        student_answer_bbox = []
-        ground_truth_bbox = []
-        iou_results = []
-        show_flage = 0
-
-        # If symbolic verification failed, try string matching
-        if reward == 0.0:
+def accuracy_reward_iou(completions, solution, tasks, **kwargs):
+    if 'ground' in tasks:
+        """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
+        contents = [completion[0]["content"] for completion in completions]
+        rewards = []
+        current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
+        for content, sol in zip(contents, solution):
+            reward = 0.0
+            # Try symbolic verification first
             try:
-                show_flage = 1
-                # Extract answer from solution if it has think/answer tags
-                ground_truth = sol.strip()
-                # Extract answer from content if it has think/answer tags
-                content_match = re.search(r'<answer>(.*?)</answer>', content)
-                student_answer = content_match.group(1).strip() if content_match else content.strip()
-                student_answer = '<answer>'+student_answer+'</answer>'
-
-                # fix format error
-                student_answer = student_answer.replace("[[",'[')  
-                student_answer = student_answer.replace("]]",']')  
-                student_answer = student_answer.replace("\n",'')  
-                # [{'Position': [254, 303, 291, 365], 'Confidence': 0.9}, {'Position': [100, 100, 200, 200], 'Confidence': 0.8}]
-                ground_truth_bbox = extract_bbox(ground_truth)
-                student_answer_bbox = extract_bbox(student_answer)
-                # pdb.set_trace()
-                if student_answer_bbox==None or type(student_answer_bbox[0])!=dict:
-                    reward = 0.0
-                else:
-                    student_answer_bbox = remove_duplicates(student_answer_bbox)   # remove duplicates
-                    iou_results = sort_and_calculate_iou(ground_truth_bbox, student_answer_bbox)
-                    ### new iou reward
-                    reward = compute_reward_iou_v2(iou_results, len(ground_truth_bbox))
-                    if reward>1:
-                        reward = 1.0
+                answer = parse(content)
+                if float(verify(answer, parse(sol))) > 0:
+                    reward = 1.0
             except Exception:
-                pass  # Keep reward as 0.0 if both methods fail
-                
-        rewards.append(reward)
-        # import pdb; pdb.set_trace()
-        if os.getenv("DEBUG_MODE") == "true":
-            log_path = os.getenv("LOG_PATH")
-            # local_rank = int(os.getenv("LOCAL_RANK", 0))
-            with open(log_path, "a") as f:
-                f.write(f"------------- {current_time} Accuracy reward of IoU: {reward} -------------\n")
-                f.write(f"content: {content}\n")
-                f.write(f"sol: {sol}\n")
-                if show_flage==1:
-                    f.write(f"student_answer_bbox: {student_answer_bbox}\n")
-                    f.write(f"ground_truth_bbox: {ground_truth_bbox}\n")
-                    if student_answer_bbox!=None:
-                        f.write(f"iou_results: {iou_results}\n")
-        show_flage = 0 
-    return rewards
+                pass  # Continue to next verification method if this fails
+
+            student_answer_bbox = []
+            ground_truth_bbox = []
+            iou_results = []
+            show_flage = 0
+
+            # If symbolic verification failed, try string matching
+            if reward == 0.0:
+                try:
+                    show_flage = 1
+                    # Extract answer from solution if it has think/answer tags
+                    ground_truth = sol.strip()
+                    # Extract answer from content if it has think/answer tags
+                    content_match = re.search(r'<answer>(.*?)</answer>', content)
+                    student_answer = content_match.group(1).strip() if content_match else content.strip()
+                    student_answer = '<answer>'+student_answer+'</answer>'
+
+                    # fix format error
+                    student_answer = student_answer.replace("[[",'[')  
+                    student_answer = student_answer.replace("]]",']')  
+                    student_answer = student_answer.replace("\n",'')  
+                    # [{'Position': [254, 303, 291, 365], 'Confidence': 0.9}, {'Position': [100, 100, 200, 200], 'Confidence': 0.8}]
+                    ground_truth_bbox = extract_bbox(ground_truth)
+                    student_answer_bbox = extract_bbox(student_answer)
+                    # pdb.set_trace()
+                    if student_answer_bbox==None or type(student_answer_bbox[0])!=dict:
+                        reward = 0.0
+                    else:
+                        student_answer_bbox = remove_duplicates(student_answer_bbox)   # remove duplicates
+                        iou_results = sort_and_calculate_iou(ground_truth_bbox, student_answer_bbox)
+                        ### new iou reward
+                        reward = compute_reward_iou_v2(iou_results, len(ground_truth_bbox))
+                        if reward>1:
+                            reward = 1.0
+                except Exception:
+                    pass  # Keep reward as 0.0 if both methods fail
+                    
+            rewards.append(reward)
+            # import pdb; pdb.set_trace()
+            if os.getenv("DEBUG_MODE") == "true":
+                log_path = os.getenv("LOG_PATH")
+                # local_rank = int(os.getenv("LOCAL_RANK", 0))
+                with open(log_path, "a", encoding='utf-8') as f:
+                    f.write(f"------------- {current_time} Ground reward: {reward} -------------\n")
+                    f.write(f"content: {content}\n")
+                    f.write(f"sol: {sol}\n")
+                    if show_flage==1:
+                        f.write(f"student_answer_bbox: {student_answer_bbox}\n")
+                        f.write(f"ground_truth_bbox: {ground_truth_bbox}\n")
+                        if student_answer_bbox!=None:
+                            f.write(f"iou_results: {iou_results}\n")
+            show_flage = 0 
+        return rewards
+    
+    # 计算通用推理（分类）损失，代码库中原来的分类奖励函数
+    elif 'general_reasoning' in tasks:
+        """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
+        contents = [completion[0]["content"] for completion in completions]
+        rewards = []
+        current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
+        for content, sol in zip(contents, solution):
+            reward = 0.0
+            # Try symbolic verification first
+            try:
+                answer = parse(content)
+                if float(verify(answer, parse(sol))) > 0:
+                    reward = 1.0
+            except Exception:
+                pass  # Continue to next verification method if this fails
+
+            # If symbolic verification failed, try string matching
+            if reward == 0.0:
+                try:
+                    # Extract answer from solution if it has think/answer tags
+                    sol_match = re.search(r'<answer>(.*?)</answer>', sol)
+                    ground_truth = sol_match.group(1).strip() if sol_match else sol.strip()
+                    
+                    # Extract answer from content if it has think/answer tags
+                    content_match = re.search(r'<answer>(.*?)</answer>', content)
+                    student_answer = content_match.group(1).strip() if content_match else content.strip()
+                    
+                    #####TODO######     记得删除
+                    split_answer = student_answer.split()
+                    num_words_ground_truth = len(split_answer)
+                    if num_words_ground_truth < 5:
+                    
+                    
+                        ground_truth = ground_truth.replace(' ','').replace('_','').lower()
+                        student_answer = student_answer.replace(' ','').replace('_','').lower()
+
+                        # Compare the extracted answers
+                        if ground_truth in student_answer or student_answer in ground_truth:
+                            reward = 1.0
+                except Exception:
+                    pass  # Keep reward as 0.0 if both methods fail
+                    
+            rewards.append(reward)
+            # import pdb; pdb.set_trace()
+            if os.getenv("DEBUG_MODE") == "true":
+                log_path = os.getenv("LOG_PATH")
+                # local_rank = int(os.getenv("LOCAL_RANK", 0))
+                with open(log_path, "a", encoding='utf-8') as f:
+                    f.write(f"------------- {current_time} General reasoning reward: {reward} -------------\n")
+                    f.write(f"content: {content}\n")
+                    f.write(f"sol: {sol}\n")
+        return rewards
+
+    # 计算关系预测
+    elif 'relation' in tasks:
+        """Reward function to evaluate the relationship between two objects."""
+        
+        contents = [completion[0]["content"] for completion in completions]
+        rewards = []
+        current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
+        for content, sol in zip(contents, solution):
+            reward = 0.0
+            # Try symbolic verification first
+            try:
+                answer = parse(content)
+                if float(verify(answer, parse(sol))) > 0:
+                    reward = 1.0
+            except Exception:
+                pass  # Continue to next verification method if this fails
+
+            # If symbolic verification failed, try string matching
+            if reward == 0.0:
+                try:
+                    # Extract answer from solution if it has think/answer tags
+                    sol_match = re.search(r'<answer>(.*?)</answer>', sol)
+                    ground_truth = sol_match.group(1).strip() if sol_match else sol.strip()
+                    
+                    # Extract answer from content if it has think/answer tags
+                    content_match = re.search(r'<answer>(.*?)</answer>', content)
+                    student_answer = content_match.group(1).strip() if content_match else content.strip()
+                    
+                    #####TODO######     记得删除
+                    split_answer = student_answer.split()
+                    num_words_ground_truth = len(split_answer)
+                    if num_words_ground_truth < 5:
+                        
+                        
+                        # ground_truth = ground_truth.replace('.','').replace('_','').lower()
+                        # student_answer = student_answer.replace('.','').replace('_','').lower()
+                        ground_truth = ground_truth.replace('_','').lower().split()
+                        student_answer = student_answer.replace('_','').lower().split()
+                        if ground_truth[0] in student_answer:
+                            reward += 0.5
+                        if ground_truth[2] in student_answer:
+                            reward += 0.5
+                        # if ground_truth[1] in student_answer:
+                        #     reward += 0.5
+
+                    # # Compare the extracted answers
+                    # if ground_truth in student_answer or student_answer in ground_truth:
+                    #     reward = 1.0
+                except Exception:
+                    pass  # Keep reward as 0.0 if both methods fail
+                    
+            rewards.append(reward)
+            # import pdb; pdb.set_trace()
+            if os.getenv("DEBUG_MODE") == "true":
+                log_path = os.getenv("LOG_PATH")
+                # local_rank = int(os.getenv("LOCAL_RANK", 0))
+                with open(log_path, "a", encoding='utf-8') as f:
+                    f.write(f"------------- {current_time} Relation reward: {reward} -------------\n")
+                    f.write(f"content: {content}\n")
+                    f.write(f"sol: {sol}\n")
+        return rewards
+    
+    # 计数奖励
+    elif 'count' in tasks:
+        """Reward function to evaluate the count of target objects."""
+
+        # 构造一个用于将数字单词转化为阿拉伯数字的字典
+        number_words_to_digits = {
+            "zero": 0, "one": 1, "two": 2, "three": 3,
+            "four": 4, "five": 5, "six": 6,
+            "seven": 7, "eight": 8, "nine": 9,
+            "ten": 10, "eleven": 11, "twelve": 12,
+            "thirteen": 13, "fourteen": 14, "fifteen": 15,
+            "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+            "twenty": 20  # 可以继续扩展以包括更大的数字
+        }
+
+        contents = [completion[0]["content"] for completion in completions]
+        rewards = []
+        current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
+        for content, sol in zip(contents, solution):
+            reward = 0.0
+            # Try symbolic verification first
+            try:
+                answer = parse(content)
+                if float(verify(answer, parse(sol))) > 0:
+                    reward = 1.0
+            except Exception:
+                pass  # Continue to next verification method if this fails
+
+            # If symbolic verification failed, try string matching
+            if reward == 0.0:
+                try:
+                    # Extract answer from solution if it has think/answer tags
+                    sol_match = re.search(r'<answer>(.*?)</answer>', sol)
+                    ground_truth = sol_match.group(1).strip() if sol_match else sol.strip()
+                    
+                    # Extract answer from content if it has think/answer tags
+                    content_match = re.search(r'<answer>(.*?)</answer>', content)
+                    student_answer = content_match.group(1).strip() if content_match else content.strip()
+                    
+                    ground_truth = ground_truth.replace(' ','').replace('_','').lower()
+                    student_answer = student_answer.replace(' ','').replace('_','').lower()
+
+                    # 转换为数字
+                    ground_truth = int(ground_truth) if ground_truth.isdigit() else ground_truth
+                    if student_answer.isdigit():
+                        student_answer = int(student_answer)
+                    elif student_answer in number_words_to_digits.keys():
+                        student_answer = number_words_to_digits[student_answer]
+            
+                    # Compare the extracted answers
+                    if ground_truth == student_answer:
+                        reward = 1.0
+                except Exception:
+                    pass  # Keep reward as 0.0 if both methods fail
+                    
+            rewards.append(reward)
+            # import pdb; pdb.set_trace()
+            if os.getenv("DEBUG_MODE") == "true":
+                log_path = os.getenv("LOG_PATH")
+                # local_rank = int(os.getenv("LOCAL_RANK", 0))
+                with open(log_path, "a", encoding='utf-8') as f:
+                    f.write(f"------------- {current_time} Count reward: {reward} -------------\n")
+                    f.write(f"content: {content}\n")
+                    f.write(f"sol: {sol}\n")
+        return rewards        
+
 
 def accuracy_reward_confidence(completions, solution, **kwargs):
     """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
@@ -375,7 +561,8 @@ SYSTEM_PROMPT = (
 
 def main(script_args, training_args, model_args):
     # Get reward functions
-    script_args.reward_funcs = ['accuracy_iou','accuracy_confidence','format']
+    # script_args.reward_funcs = ['accuracy_iou','accuracy_confidence','format']
+    script_args.reward_funcs = ['accuracy_iou','format']
     reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
 
     # Load the dataset from huggingface

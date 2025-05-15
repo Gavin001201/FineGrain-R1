@@ -164,8 +164,9 @@ def remove_duplicates(bbox_list):
 # model_path = "./share_models/Qwen2-VL-2B-Instruct"
 # ori_processor_path = "./share_models/Qwen2-VL-2B-Instruct"
 
-model_path = "./share_models/Qwen2-VL-2B-Instruct_GRPO_model/checkpoint-200"
-ori_processor_path = "./share_models/Qwen2-VL-2B-Instruct"
+# model_path = "/home/data/wyy/projects/Visual-RFT/checkpoints/Qwen2-VL-2B-Instruct_GRPO_coco_base65cate_6k"
+model_path = "/home/data/wyy/checkpoints/Qwen2-VL-2B-Instruct"
+ori_processor_path = "/home/data/wyy/checkpoints/Qwen2-VL-2B-Instruct"
 
 def run(rank, world_size):
     model = Qwen2VLForConditionalGeneration.from_pretrained(
@@ -179,7 +180,7 @@ def run(rank, world_size):
     model = model.to(torch.device(rank))
     model = model.eval()
 
-    with open('./data/coco/annotations/instances_val2017.json', 'r') as json_file:
+    with open('/home/data/wyy/datasets/coco2017/annotations/instances_val2017.json', 'r') as json_file:
         instances_val2017 = json.load(json_file)
     print(type(instances_val2017))
 
@@ -213,15 +214,15 @@ def run(rank, world_size):
     bbox_count = 0
     pred_results = []
     if '2B' in model_path:
-        exist_cat = json.load(open("./exist_map_coco_Qwen2_vl_2B_baseline.json", 'r'))
+        exist_cat = json.load(open("/home/data/wyy/projects/Visual-RFT/coco_evaluation/exist_map_coco_Qwen2_vl_2B_baseline.json", 'r'))
     elif '7B' in model_path:
-        exist_cat = json.load(open("./exist_map_coco_Qwen2_vl_7B_baseline.json", 'r'))
+        exist_cat = json.load(open("/home/data/wyy/projects/Visual-RFT/coco_evaluation/exist_map_coco_Qwen2_vl_7B_baseline.json", 'r'))
       
     for image in tqdm(split_images): 
         image_id = image['id']
         image_height = image['height']
         image_width = image['width']
-        image_path = './data/coco/val2017/'+image['file_name']    ### Modify according to your own image path.
+        image_path = '/home/data/wyy/datasets/coco2017/val2017/'+image['file_name']    ### Modify according to your own image path.
 
         ### Traverse all class in image.
         for cate in exist_cat[str(image_id)]:
@@ -236,7 +237,8 @@ def run(rank, world_size):
             #     continue
           
             ### open vocabulary experiment:  15 new classes
-            selected_cate = ['mouse', 'fork', 'hot dog', 'cat', 'airplane', 'suitcase', 'parking meter', 'sandwich', 'train', 'hair drier', 'toilet', 'toaster', 'snowboard', 'frisbee', 'bear']
+            # selected_cate = ['mouse', 'fork', 'hot dog', 'cat', 'airplane', 'suitcase', 'parking meter', 'sandwich', 'train', 'hair drier', 'toilet', 'toaster', 'snowboard', 'frisbee', 'bear']
+            selected_cate = ['bus', 'train', 'fire hydrant', 'stop sign', 'cat', 'dog', 'bed', 'toilet']
             if category not in selected_cate:
                 continue
 
@@ -252,7 +254,8 @@ def run(rank, world_size):
             )
 
             image_path = image_path
-            query = '<image>\n' + question
+            # query = '<image>\n' + question
+            query = question
             # logger.info(RED+query+RESET)
             
             messages = [
@@ -279,8 +282,13 @@ def run(rank, world_size):
                 )
                 inputs = inputs.to(model.device)
                 
+                generation_config = GenerationConfig(
+                    max_new_tokens=1024,
+                    do_sample=True
+                )
+                
                 # Inference: Generation of the output
-                generated_ids = model.generate(**inputs, max_new_tokens=1024)
+                generated_ids = model.generate(**inputs, generation_config=generation_config)
                 generated_ids_trimmed = [
                     out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
                 ]
@@ -347,7 +355,7 @@ def main():
 
         logger.info('Error number: ' + str(global_count_error))  
         ### save path
-        with open('prediction_results.json', 'w') as json_file:
+        with open('/home/data/wyy/projects/Visual-RFT/eval_results/coco_eval/prediction_results_base.json', 'w') as json_file:
             json.dump(global_results, json_file)
         logger.info("Done")
         logger.info('finished running')
